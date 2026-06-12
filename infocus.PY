@@ -113,13 +113,16 @@ def load_data():
         df["MONITOR STATUS"] = "MONITOR CLOSELY"
 
     df["MONITOR STATUS"] = (
-        df["MONITOR STATUS"]
-        .fillna("MONITOR CLOSELY")
-        .replace("", "MONITOR CLOSELY")
-        .astype(str)
-        .str.upper()
-        .str.strip()
-    )
+    df["MONITOR STATUS"]
+    .fillna("MONITOR CLOSELY")
+    .replace("", "MONITOR CLOSELY")
+    .astype(str)
+    .str.replace("⚠️", "", regex=False)
+    .str.replace("✅", "", regex=False)
+    .str.replace("❌", "", regex=False)
+    .str.strip()
+    .str.upper()
+)
 
     df["STATUS"] = df["STATUS"].replace(
         {"PASSED": "PASS", "FAILED": "FAIL", "SUCCESS": "PASS", "ERROR": "FAIL"}
@@ -181,17 +184,30 @@ app = Dash(__name__)
 # APP LAYOUT
 # =========================================================
 
-app.layout = html.Div(
-    [
-        dcc.Interval(id="refresh_timer", interval=60000, n_intervals=0),
-        html.H1(
+app.layout =  dcc.Loading(
+
+    id="global_loader",
+
+    type="circle",
+
+    color="#1b6ab9",
+
+    fullscreen=False,
+
+    children=html.Div(
+        [
+         dcc.Interval(id="refresh_timer", interval=60000, n_intervals=0),
+         html.H1(
             "TEST EXECUTION ANALYTICS DASHBOARD",
             style={"textAlign": "center", "color": "#1b6ab9", "marginBottom": "20px"},
         ),
+     
+
+
         # =====================================================
         # FILTERS
         # =====================================================
-        html.Div(
+            html.Div(
             [
                 html.Div(
                     [
@@ -353,6 +369,20 @@ app.layout = html.Div(
                     },
                 ),
                 html.Button(
+                   "FAILED TESTS",
+                   id="btn_failed",
+                  n_clicks=0,
+                   style={
+                        "backgroundColor": "#dc3545",
+                        "color": "white",
+                        "border": "none",
+                        "padding": "12px 20px",
+                        "marginLeft": "10px",
+                        "cursor": "pointer",
+                        "fontWeight": "bold",
+    },
+),
+                html.Button(
                     "FULL CSV TABLE",
                     id="btn_full",
                     n_clicks=0,
@@ -363,14 +393,17 @@ app.layout = html.Div(
                         "padding": "12px 20px",
                         "cursor": "pointer",
                     },
-                ),
-            ],
+                ), 
+               
+            ],       
             style={"textAlign": "center", "marginTop": "15px"},
         ),
         html.Br(),
         html.Div(id="dynamic_table"),
     ],
     style={"backgroundColor": "#f5f7fa", "padding": "20px"},
+),
+
 )
 
 # =========================================================
@@ -573,22 +606,77 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
     # FAILED GRAPH
     # =====================================================
 
-    failed_df = filtered_df[filtered_df["STATUS"].astype(str).str.contains("FAIL")]
+    failed_df = filtered_df[
+        filtered_df["STATUS"]
+        .astype(str)
+        .str.contains("FAIL", na=False)
+    ]
 
-    failed_group = failed_df.groupby("DATE").size().reset_index(name="FAILED COUNT")
+    print("\nFAILED CHART COLUMNS:")
+    print(failed_df.columns.tolist())
 
-    failed_fig = px.bar(
-        failed_group,
-        x="DATE",
-        y="FAILED COUNT",
-        text="FAILED COUNT",
-        color="FAILED COUNT",
-        title="FAILED TEST ANALYSIS",
+    if "TEST TYPE" in failed_df.columns:
+
+        failed_group = (
+            failed_df.groupby(
+                ["DATE", "TEST TYPE"]
+            )
+            .size()
+            .reset_index(name="FAILED COUNT")
+        )
+
+        failed_fig = px.bar(
+
+            failed_group,
+
+            x="DATE",
+
+            y="FAILED COUNT",
+
+            color="TEST TYPE",
+
+            text="FAILED COUNT",
+
+            barmode="stack",
+
+            title="FAILED TESTS BY TEST TYPE"
+
+        )
+
+    else:
+
+        failed_group = (
+            failed_df.groupby("DATE")
+            .size()
+            .reset_index(name="FAILED COUNT")
+        )
+
+        failed_fig = px.bar(
+
+            failed_group,
+
+            x="DATE",
+
+            y="FAILED COUNT",
+
+            text="FAILED COUNT",
+
+            color="FAILED COUNT",
+
+            title="FAILED TEST ANALYSIS"
+
+        )
+
+    failed_fig.update_traces(
+        textposition="inside"
     )
 
-    failed_fig.update_traces(textposition="outside")
-
-    failed_fig.update_layout(height=420)
+    failed_fig.update_layout(
+        height=420,
+        xaxis_title="DATE",
+        yaxis_title="FAILED TEST COUNT",
+        legend_title="TEST TYPE"
+    )   
 
     # =====================================================
     # TIMESERIES
@@ -599,7 +687,6 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
     # =====================================================
     # CUMULATIVE TOTAL
     # =====================================================
-
     daily_total["TOTAL TESTS"] = daily_total["DAILY TESTS"].cumsum()
 
     # =====================================================
@@ -666,9 +753,12 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
     print(filtered_df["MONITOR STATUS"].value_counts())
 
     monitor_df = filtered_df[
-        filtered_df["MONITOR STATUS"].isin(["HIGH", "CRITICAL", "MONITOR CLOSELY"])
-    ]
-
+    filtered_df["MONITOR STATUS"]
+    .str.contains(
+        "HIGH|CRITICAL|MONITOR",
+        na=False
+    )
+  ]
     monitor_group = (
         monitor_df.groupby(["MONITOR STATUS", "STATUS"])
         .size()
@@ -717,6 +807,11 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
 
     root_group = root_group.sort_values(by="FAILED COUNT", ascending=False)
 
+    total_failed_root_causes = root_group[
+    "FAILED COUNT"
+     ].sum()
+
+    
     failure_root_fig = px.pie(
         root_group,
         names="ROOT CAUSE",
@@ -726,6 +821,20 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
     )
 
     failure_root_fig.update_traces(textinfo="label+value+percent")
+    failure_root_fig.add_annotation(
+
+    text=f"<b>{total_failed_root_causes}</b>",
+
+    x=0.5,
+    y=0.5,
+
+    font=dict(
+        size=26
+    ),
+
+    showarrow=False
+
+)
 
     failure_root_fig.update_layout(height=450)
 
@@ -750,10 +859,11 @@ def update_dashboard(start_date, end_date, selected_status, refresh_timer):
     [
         Input("btn_new", "n_clicks"),
         Input("btn_updated", "n_clicks"),
+        Input("btn_failed", "n_clicks"),        
         Input("btn_full", "n_clicks"),
     ],
 )
-def show_tables(new_clicks, updated_clicks, full_clicks):
+def show_tables(new_clicks, updated_clicks,failed_clicks, full_clicks):
     df = load_data()
     ctx = callback_context
 
@@ -771,6 +881,14 @@ def show_tables(new_clicks, updated_clicks, full_clicks):
         table_df = df[df["UPDATED AT"].notna()][
             ["DATE", "UPDATED AT", "TEST ID", "TEST NAME", "STATUS"]
         ]
+    elif button_id == "btn_failed":
+
+        table_df = df[
+            df["STATUS"]
+            .astype(str)
+            .str.contains("FAIL", na=False)
+        ]
+
 
     else:
 
